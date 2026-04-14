@@ -1,7 +1,6 @@
 import requests
 import time
 import re
-import os
 import json
 from datetime import datetime
 
@@ -32,32 +31,51 @@ def read_full_email(session, email_id, sid_token):
         return None
     return resp.json()
 
-def subscribe_http_only(email):
-    """HTTP-only subscribe (no browser needed for GitHub Actions)"""
-    print(f"[*] Subscribing with {email} via HTTP request...")
+def smart_subscribe(email):
+    """Try to find the actual form endpoint"""
+    print(f"[*] Attempting to subscribe {email}...")
     
-    # Try common form endpoints
-    urls = [
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    # First, get the main page to find form action
+    try:
+        resp = requests.get("https://newsletter.chrisjkoerner.com", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            # Look for form action in HTML
+            import re
+            match = re.search(r'<form[^>]+action="([^"]+)"', resp.text)
+            if match:
+                form_url = match.group(1)
+                if not form_url.startswith("http"):
+                    form_url = "https://newsletter.chrisjkoerner.com" + form_url
+                
+                # Submit the form
+                data = {"email": email}
+                post_resp = requests.post(form_url, data=data, headers=headers, timeout=10)
+                if post_resp.status_code in [200, 302, 201]:
+                    print("[+] Subscribed successfully via form endpoint")
+                    return True
+    except Exception as e:
+        print(f"[-] Error during form detection: {e}")
+    
+    # Fallback: try common newsletter endpoints
+    endpoints = [
         "https://newsletter.chrisjkoerner.com/subscribe",
         "https://newsletter.chrisjkoerner.com/api/subscribe",
         "https://chrisjkoerner.com/subscribe"
     ]
-    
-    data = {
-        "email": email,
-        "submit": "Subscribe"
-    }
-    
-    for url in urls:
+    for url in endpoints:
         try:
-            resp = requests.post(url, data=data, timeout=10)
-            if resp.status_code in [200, 302]:
-                print(f"[+] Successfully subscribed via {url}")
+            r = requests.post(url, data={"email": email}, headers=headers, timeout=5)
+            if r.status_code < 400:
+                print(f"[+] Subscribed via {url}")
                 return True
         except:
             continue
     
-    print("[-] HTTP subscribe failed — will rely on manual or next step")
+    print("[-] All subscription attempts failed. Manual signup may be required.")
     return False
 
 # ---------- MAIN RANSACK ----------
@@ -67,18 +85,15 @@ def ransack():
     email, session, sid_token = get_disposable_email()
     print(f"[+] Disposable email: {email}")
     
-    # Save email to file so we can see it
     with open("target_email.txt", "w") as f:
         f.write(email)
     
-    # Try to subscribe
-    subscribe_http_only(email)
+    smart_subscribe(email)
     
-    # Monitor for 7 days
     last_id = 0
     all_emails = []
     
-    for hour in range(168):  # 7 days * 24 hours
+    for hour in range(168):  # 7 days
         print(f"[*] Hour {hour+1}/168 checking inbox...")
         
         new_emails, last_id = check_inbox(session, sid_token, last_id)
@@ -89,30 +104,20 @@ def ransack():
                     "timestamp": datetime.now().isoformat(),
                     "subject": email_obj.get('mail_subject'),
                     "from": email_obj.get('mail_from'),
-                    "body": full.get('mail_body', '')[:5000]  # Truncate for GitHub
+                    "body": full.get('mail_body', '')[:5000]
                 }
                 all_emails.append(email_data)
                 print(f"[!] Captured: {email_data['subject']}")
         
-        # Save progress every hour
         with open("ransack_results.json", "w") as f:
             json.dump(all_emails, f, indent=2)
         
-        # Also save as readable text
         with open("ransack_report.txt", "w", encoding="utf-8") as f:
-            f.write(f"KOERNER RANSACK REPORT\n")
-            f.write(f"Target email: {email}\n")
-            f.write(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write("="*60 + "\n\n")
+            f.write(f"KOERNER RANSACK REPORT\nTarget email: {email}\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             for e in all_emails:
-                f.write(f"Subject: {e['subject']}\n")
-                f.write(f"From: {e['from']}\n")
-                f.write(f"Time: {e['timestamp']}\n")
-                f.write("-"*40 + "\n")
-                f.write(e['body'] + "\n\n")
-                f.write("="*60 + "\n\n")
+                f.write(f"Subject: {e['subject']}\nFrom: {e['from']}\nTime: {e['timestamp']}\n{e['body']}\n\n{'-'*40}\n\n")
         
-        time.sleep(3600)  # Wait 1 hour between checks
+        time.sleep(3600)
     
     print("[*] Ransack complete!")
 
