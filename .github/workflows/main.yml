@@ -1,0 +1,34 @@
+name: Ransack Koerner Newsletter
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight UTC
+  workflow_dispatch:  # Lets you run manually
+
+jobs:
+  ransack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10080  # 7 days
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        run: pip install requests
+      
+      - name: Run ransack
+        run: python ransack.py
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ransack-results
+          path: |
+            ransack_results.json
+            ransack_report.txt
+            target_email.txt
+          retention-days: 30
